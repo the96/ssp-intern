@@ -15,17 +15,7 @@ abstract class Server(){
   }
 
   def controller() {}
-/*    while(true) {
-      val socket:Socket = server.accept
-      val (requestLines: ArrayList[String], content: String) = getRequest(socket.getInputStream)
-      sendResponse(socket.getOutputStream, content)
-      content match {
-        case "shutdown" => return
-        case _ => Unit
-      }
-    }
-  }
-*/
+
   def getRequest(input: InputStream): (ArrayList[String],String) = {
     val isr = new InputStreamReader(input)
     val br = new BufferedReader(isr)
