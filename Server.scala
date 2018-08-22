@@ -7,8 +7,8 @@ import java.io.OutputStream
 import java.nio.charset.StandardCharsets
 import java.util.ArrayList
 
-abstract class Server(){
-  val server = new ServerSocket(80)
+abstract class Server(port: Int){
+  val server = new ServerSocket(port)
   def run() {
     controller()
     server.close()
@@ -19,8 +19,11 @@ abstract class Server(){
   def getRequest(input: InputStream): (ArrayList[String],String) = {
     val isr = new InputStreamReader(input)
     val br = new BufferedReader(isr)
+    println("gr1")
     val list = readRequestHead(br, new ArrayList[String])
+    println("gr2")
     val contentLength = getContentLength(list)
+    println("gr3")
     val content = contentLength match {
       case -1 => ""
       case _ => getContent(br,list,contentLength)
@@ -31,6 +34,7 @@ abstract class Server(){
   def readRequestHead(br: BufferedReader, req: ArrayList[String]): ArrayList[String] = {
     val line = br.readLine
     req.add(line)
+    println(line)
     line match {
       case "" => req
       case _ => readRequestHead(br, req)
@@ -66,4 +70,5 @@ abstract class Server(){
                     responseBody
     output.write(response.getBytes(StandardCharsets.UTF_8))
   }
+
 }
