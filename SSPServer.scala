@@ -59,12 +59,12 @@ class SSPServer(port: Int) extends Server(port) {
     var winner_url = ""
     var secondPriceResponse = new DSPResponse(null, null, 0)
     for (i <- 0 until dspList.length) {
-      val dspResponse = dspRequest(dspList(i),app_id)
-      if (! maxPriceResponse.compareTo(dspResponse)) {
-        secondPriceResponse = maxPriceResponse
-        maxPriceResponse = dspResponse
-        winner_url = dspList(i)
-      }
+        val dspResponse = dspRequest(dspList(i),app_id)
+        if (! maxPriceResponse.compareTo(dspResponse)) {
+          secondPriceResponse = maxPriceResponse
+          maxPriceResponse = dspResponse
+          winner_url = dspList(i)
+        }
     }
 
     // send win notice
