@@ -61,7 +61,7 @@ abstract class Server(port: Int){
   def sendResponse(output: OutputStream, responseBody: String) {
     val response = "HTTP/1.1 200 OK\r\n" +
                     "Content-Length: " + responseBody.length + "\r\n" +
-                    "Content-Type: text/plain\r\n" +
+                    "Content-Type: application/json, charset=URF-8\r\n" +
                     "\r\n" + 
                     responseBody
     output.write(response.getBytes(StandardCharsets.UTF_8))

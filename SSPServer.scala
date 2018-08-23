@@ -1,42 +1,44 @@
 import java.net.Socket
 import java.util.ArrayList
 import java.util.Calendar
-import java.net.HttpURLConnection
-import java.net.URL
-import java.io.PrintStream
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.util.UUID
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
 import java.text.SimpleDateFormat
 import io.circe.syntax._
 import io.circe.generic.auto._
 import io.circe.parser._
 
+import scalaj.http._
+import scala.concurrent._
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.Random
-import scala.language.postfixOps
+import scala.io.Source
 
 object Main {
   def main(args: Array[String]) {
-    val ssps = new SSPServer(80)
-    val dsps = new DSPServer(8080)
-    Future { dsps.run() }
+    val serverlist = Source.fromFile("serverlist.txt")
+    val lines = serverlist.getLines
+    lines.foreach(println)
+    serverlist.close
+    val ssps = new SSPServer(8081)
     ssps.run()
   }
 }
 
 class SSPServer(port: Int) extends Server(port) {
   val SERVER_NAME = "SSPServer_Mori"
-  val dspList = Array("http://localhost:8080","http://localhost:8080")
+  val dspList = Array("http://localhost:8080")
   var running = false
-  override def controller() {
+ override def controller() {
     running = true
     while(running) {
       val socket: Socket = server.accept
       catchRequest(socket.getInputStream, socket.getOutputStream)
+      socket.close()
     }
   }
 
@@ -46,38 +48,52 @@ class SSPServer(port: Int) extends Server(port) {
     // decode request
     val (requestLines: ArrayList[String], content: String) = getRequest(is)
     val app_id = getAppId(content)
+    app_id match {
+      case -1 => running = false
+      case _ =>
+    }
 
     // request for dsp
     var maxPriceResponse = new DSPResponse("not found", "not found", 0)
     var winner_url = "not found"
     var secondPriceResponse = new DSPResponse("not found", "not found", 0)
+    val futureList: ArrayList[Future[DSPResponse]] = new ArrayList[Future[DSPResponse]]
+
     for (i <- 0 until dspList.length) {
-      val sdf = new SimpleDateFormat("yyyyMMdd-HHmmss.SSSS")
-      println(dspRequest(dspList(i),app_id).request_id)
-      println(sdf.format(Calendar.getInstance().getTime()))
       val f: Future[DSPResponse] = Future {
         dspRequest(dspList(i), app_id)
       }
-      try {
-        val dspResponse = Await.result(f, 1000 milliseconds)
-        if (! maxPriceResponse.compareTo(dspResponse)) {
-          secondPriceResponse = maxPriceResponse
-          maxPriceResponse = dspResponse
-          winner_url = dspList(i)
-        }
-      } catch { case e => println("timeout") }
-      println(sdf.format(Calendar.getInstance().getTime()))
+      futureList.add(f)
+    }
+
+    for (i <- 0 until dspList.length) {
+      val f = futureList.get(i)
+      val dspResponse = Await.result(f,Duration.Inf)
+      if (null != dspResponse && !maxPriceResponse.compareTo(dspResponse)) {
+        secondPriceResponse = maxPriceResponse
+        maxPriceResponse = dspResponse
+        winner_url = dspList(i)
+      }
     }
 
     // send win notice
     winner_url match {
       case "not found" =>
-      case _ => print(sendWinNotice(winner_url, maxPriceResponse.request_id, secondPriceResponse.price))
+      case _ => sendWinNotice(winner_url, maxPriceResponse.request_id, secondPriceResponse.price)
     }
 
     // return response for sdk
     val json = AdUrl(maxPriceResponse.url).asJson
     sendResponse(os, json.toString)
+    os.close()
+    is.close()
+
+    // logging sale
+    val fos = new FileOutputStream("sale.log", true)
+    val filewriter = new OutputStreamWriter(fos, "UTF-8")
+    filewriter.write(maxPriceResponse.request_id + ": " + maxPriceResponse.price + "\r\n")
+    filewriter.close()
+    fos.close()
   }
 
   def getAppId(content: String): Int = {
@@ -89,38 +105,35 @@ class SSPServer(port: Int) extends Server(port) {
     }
   }
 
+  // Server class have this method better than SSPServer class. :(
   def post(urlstr: String, body: String):String = {
-    val url = new URL(urlstr)
-    val con: HttpURLConnection = url.openConnection().asInstanceOf[HttpURLConnection]
-    con.setRequestMethod("POST")
-    con.addRequestProperty("User-Agent", SERVER_NAME)
-    con.addRequestProperty("Content-Type", "application/json; charset=UTF-8")
-    con.setDoOutput(true)
-    con.setDoInput(true)
-
-    val ps = new PrintStream(con.getOutputStream)
-    ps.print(body)
-    ps.close()
-    con.connect()
-    con.getResponseCode() match {
-      case HttpURLConnection.HTTP_OK => Unit
-      case _ => return null
-    }
-    val br = new BufferedReader(new InputStreamReader(con.getInputStream))
-    val sb = new StringBuilder()
-    var line = br.readLine()
-    while (line != null) {
-      sb.append(line)
-      line = br.readLine()
-    }
-    con.disconnect()
-    br.close()
-    return sb.toString
+   val resp: HttpResponse[String] =
+      Http(urlstr)
+        .postData(body)
+        .headers(
+          "User-Agent" -> SERVER_NAME,
+          "Content-Type" -> "application/json; charset=UTF-8"
+        ).asString
+    return if (resp.is2xx) resp.body else null
   }
+
+  def postDSPRequest(urlstr: String, body: String):String = {
+    val resp: HttpResponse[String] =
+       Http(urlstr)
+         .postData(body)
+//         .timeout(connTimeoutMs = 150, readTimeoutMs = 100)
+         .headers(
+           "User-Agent" -> SERVER_NAME,
+           "Content-Type" -> "application/json; charset=UTF-8"
+         ).asString
+
+    return if (resp.is2xx) resp.body else null
+  }
+
 
   def sendWinNotice(urlstr: String, request_id: String, price: Double):Boolean = {
     val body = WinNotice(request_id, price).asJson
-    val result = post(urlstr, body.toString)
+    val result = post(urlstr + "/win", body.toString)
     val response = decode[WinNoticeResult](result)
     response match {
       case Right(res) => {
@@ -136,11 +149,12 @@ class SSPServer(port: Int) extends Server(port) {
   }
 
   def dspRequest(urlstr: String, app_id: Int):DSPResponse = {
+//    return DSPResponse("aaa", "hoge.jpg", 123.45)
     val sdf = new SimpleDateFormat("yyyyMMdd-HHmmss.SSSS")
     val request_time = sdf.format(Calendar.getInstance().getTime())
-    val request_id = SERVER_NAME + "-" + request_time + Random.nextInt(400000000)
+    val request_id = SERVER_NAME + "-" + request_time + UUID.randomUUID().toString()
     val body = DSPRequest(SERVER_NAME, request_time, request_id, app_id).asJson
-    val result = post(urlstr, body.toString)
+    val result = postDSPRequest(urlstr + "/req", body.toString)
     val response = decode[DSPResponse](result)
     response match {
       case Right(res) => {
