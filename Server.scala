@@ -32,6 +32,7 @@ abstract class Server(port: Int){
     val line = br.readLine
     req.add(line)
     line match {
+      case null => req
       case "" => req
       case _ => readRequestHead(br, req)
     }
@@ -59,10 +60,10 @@ abstract class Server(port: Int){
   }
 
   def sendResponse(output: OutputStream, responseBody: String) {
-    val response = "HTTP/1.1 200 OK\r\n" +
-                    "Content-Length: " + responseBody.length + "\r\n" +
-                    "Content-Type: application/json, charset=URF-8\r\n" +
-                    "\r\n" + 
+    val response = "HTTP/1.1 200 OK\n" +
+                    "Content-Length: " + responseBody.length + "\n" +
+                    "Content-Type: application/json, charset=URF-8\n" +
+                    "\n" + 
                     responseBody
     output.write(response.getBytes(StandardCharsets.UTF_8))
   }

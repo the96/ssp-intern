@@ -1,4 +1,5 @@
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.ArrayList
 import java.util.Calendar
 import java.util.UUID
@@ -21,25 +22,27 @@ import scala.io.Source
 object Main {
   def main(args: Array[String]) {
     val serverlist = Source.fromFile("serverlist.txt")
-    val lines = serverlist.getLines
-    lines.foreach(println)
+    val lines = serverlist.getLines.toList
     serverlist.close
-    val ssps = new SSPServer(8081)
+    val ssps = new SSPServer(8081,lines)
     ssps.run()
   }
 }
 
-class SSPServer(port: Int) extends Server(port) {
+class SSPServer(port: Int, val dspList: List[String]) extends Server(port) {
   val SERVER_NAME = "SSPServer_Mori"
-  val dspList = Array("http://localhost:8080")
   var running = false
- override def controller() {
+  val fos = new FileOutputStream("sale.log", true)
+  val filewriter = new OutputStreamWriter(fos, "UTF-8")
+  override def controller() {
     running = true
     while(running) {
       val socket: Socket = server.accept
       catchRequest(socket.getInputStream, socket.getOutputStream)
       socket.close()
     }
+    filewriter.close()
+    fos.close()
   }
 
   // catch request from sdk.
@@ -48,10 +51,6 @@ class SSPServer(port: Int) extends Server(port) {
     // decode request
     val (requestLines: ArrayList[String], content: String) = getRequest(is)
     val app_id = getAppId(content)
-    app_id match {
-      case -1 => running = false
-      case _ =>
-    }
 
     // request for dsp
     var maxPriceResponse = new DSPResponse("not found", "not found", 0)
@@ -89,11 +88,7 @@ class SSPServer(port: Int) extends Server(port) {
     is.close()
 
     // logging sale
-    val fos = new FileOutputStream("sale.log", true)
-    val filewriter = new OutputStreamWriter(fos, "UTF-8")
-    filewriter.write(maxPriceResponse.request_id + ": " + maxPriceResponse.price + "\r\n")
-    filewriter.close()
-    fos.close()
+    filewriter.write(maxPriceResponse.request_id + ": " + maxPriceResponse.price + "\n")
   }
 
   def getAppId(content: String): Int = {
@@ -118,16 +113,17 @@ class SSPServer(port: Int) extends Server(port) {
   }
 
   def postDSPRequest(urlstr: String, body: String):String = {
-    val resp: HttpResponse[String] =
-       Http(urlstr)
-         .postData(body)
-//         .timeout(connTimeoutMs = 150, readTimeoutMs = 100)
-         .headers(
-           "User-Agent" -> SERVER_NAME,
-           "Content-Type" -> "application/json; charset=UTF-8"
-         ).asString
-
-    return if (resp.is2xx) resp.body else null
+    try {
+      val resp: HttpResponse[String] =
+        Http(urlstr)
+          .postData(body)
+          .timeout(connTimeoutMs = 150, readTimeoutMs = 100)
+          .headers(
+            "User-Agent" -> SERVER_NAME,
+            "Content-Type" -> "application/json; charset=UTF-8"
+          ).asString
+        return if (resp.is2xx) resp.body else null
+      } catch { case e: SocketTimeoutException => return null}
   }
 
 
@@ -138,7 +134,7 @@ class SSPServer(port: Int) extends Server(port) {
     response match {
       case Right(res) => {
         res.result match {
-          case "ok" => return true
+          case "OK" => return true
           case _ => return false
         }
       }
@@ -149,7 +145,6 @@ class SSPServer(port: Int) extends Server(port) {
   }
 
   def dspRequest(urlstr: String, app_id: Int):DSPResponse = {
-//    return DSPResponse("aaa", "hoge.jpg", 123.45)
     val sdf = new SimpleDateFormat("yyyyMMdd-HHmmss.SSSS")
     val request_time = sdf.format(Calendar.getInstance().getTime())
     val request_id = SERVER_NAME + "-" + request_time + UUID.randomUUID().toString()
@@ -161,7 +156,6 @@ class SSPServer(port: Int) extends Server(port) {
         return res
       }
       case Left(err) => {
-        println(err)
         return null
       }
     }
