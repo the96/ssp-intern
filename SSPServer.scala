@@ -1,5 +1,6 @@
 import java.net.Socket
 import java.util.ArrayList
+import java.util.Calendar
 import java.net.HttpURLConnection
 import java.net.URL
 import java.io.PrintStream
@@ -7,18 +8,16 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.concurrent.TimeoutException
+import java.text.SimpleDateFormat
 import io.circe.syntax._
 import io.circe.generic.auto._
 import io.circe.parser._
 
-import akka.actor._
-import akka.pattern.ask
-import akka.util.Timeout
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.{Success, Failure}
+import scala.util.Random
+import scala.language.postfixOps
 
 object Main {
   def main(args: Array[String]) {
@@ -47,32 +46,38 @@ class SSPServer(port: Int) extends Server(port) {
     // decode request
     val (requestLines: ArrayList[String], content: String) = getRequest(is)
     val app_id = getAppId(content)
-    app_id match {
-      case -1 => 
-        sendResponse(os,"shutdown...")
-        running = false
-      case _ => Unit
-    }
 
     // request for dsp
-    var maxPriceResponse = new DSPResponse(null, null, 0)
-    var winner_url = ""
-    var secondPriceResponse = new DSPResponse(null, null, 0)
+    var maxPriceResponse = new DSPResponse("not found", "not found", 0)
+    var winner_url = "not found"
+    var secondPriceResponse = new DSPResponse("not found", "not found", 0)
     for (i <- 0 until dspList.length) {
-        val dspResponse = dspRequest(dspList(i),app_id)
+      val sdf = new SimpleDateFormat("yyyyMMdd-HHmmss.SSSS")
+      println(dspRequest(dspList(i),app_id).request_id)
+      println(sdf.format(Calendar.getInstance().getTime()))
+      val f: Future[DSPResponse] = Future {
+        dspRequest(dspList(i), app_id)
+      }
+      try {
+        val dspResponse = Await.result(f, 1000 milliseconds)
         if (! maxPriceResponse.compareTo(dspResponse)) {
           secondPriceResponse = maxPriceResponse
           maxPriceResponse = dspResponse
           winner_url = dspList(i)
         }
+      } catch { case e => println("timeout") }
+      println(sdf.format(Calendar.getInstance().getTime()))
     }
 
     // send win notice
-    val body = WinNotice(maxPriceResponse.request_id, secondPriceResponse.price).asJson
+    winner_url match {
+      case "not found" =>
+      case _ => print(sendWinNotice(winner_url, maxPriceResponse.request_id, secondPriceResponse.price))
+    }
 
     // return response for sdk
-    val json = "test json"
-    sendResponse(os, json)
+    val json = AdUrl(maxPriceResponse.url).asJson
+    sendResponse(os, json.toString)
   }
 
   def getAppId(content: String): Int = {
@@ -84,10 +89,7 @@ class SSPServer(port: Int) extends Server(port) {
     }
   }
 
-  def dspRequest(urlstr: String, app_id: Int):DSPResponse = {
-    val request_time = "yyyyMMdd-HHMMSS.ssss"
-    val request_id = SERVER_NAME + "-" + request_time
-    val body = DSPRequest(SERVER_NAME, request_time, request_id, app_id).asJson
+  def post(urlstr: String, body: String):String = {
     val url = new URL(urlstr)
     val con: HttpURLConnection = url.openConnection().asInstanceOf[HttpURLConnection]
     con.setRequestMethod("POST")
@@ -96,17 +98,13 @@ class SSPServer(port: Int) extends Server(port) {
     con.setDoOutput(true)
     con.setDoInput(true)
 
-    val ps = new PrintStream(con.getOutputStream);
+    val ps = new PrintStream(con.getOutputStream)
     ps.print(body)
     ps.close()
     con.connect()
-    val status = con.getResponseCode()
-    println(status)
-    status match {
+    con.getResponseCode() match {
       case HttpURLConnection.HTTP_OK => Unit
-      case _ =>
-        con.disconnect()
-        return null
+      case _ => return null
     }
     val br = new BufferedReader(new InputStreamReader(con.getInputStream))
     val sb = new StringBuilder()
@@ -117,16 +115,41 @@ class SSPServer(port: Int) extends Server(port) {
     }
     con.disconnect()
     br.close()
-    var json = sb.toString
-    val response = decode[DSPResponse](json)
+    return sb.toString
+  }
+
+  def sendWinNotice(urlstr: String, request_id: String, price: Double):Boolean = {
+    val body = WinNotice(request_id, price).asJson
+    val result = post(urlstr, body.toString)
+    val response = decode[WinNoticeResult](result)
+    response match {
+      case Right(res) => {
+        res.result match {
+          case "ok" => return true
+          case _ => return false
+        }
+      }
+      case Left(err) => {
+        return false
+      }
+    }
+  }
+
+  def dspRequest(urlstr: String, app_id: Int):DSPResponse = {
+    val sdf = new SimpleDateFormat("yyyyMMdd-HHmmss.SSSS")
+    val request_time = sdf.format(Calendar.getInstance().getTime())
+    val request_id = SERVER_NAME + "-" + request_time + Random.nextInt(400000000)
+    val body = DSPRequest(SERVER_NAME, request_time, request_id, app_id).asJson
+    val result = post(urlstr, body.toString)
+    val response = decode[DSPResponse](result)
     response match {
       case Right(res) => {
         return res
       }
       case Left(err) => {
         println(err)
+        return null
       }
     }
-    return null
   }
 }

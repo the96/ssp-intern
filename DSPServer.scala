@@ -10,24 +10,27 @@ class DSPServer(port: Int) extends Server(port) {
     running = true
     while(running) {
       val socket: Socket = server.accept
-      println("dsp1")
       val (requestLines: ArrayList[String], content: String) = getRequest(socket.getInputStream)
       var response:io.circe.Json = null
-      println("dsp2")
-      decode[DSPRequest](content) match {
-        case Right(request) => {
-          response = DSPResponse(request.request_id, "http://localhost/hoge.jpg", 12.345).asJson
-          running = request.app_id match {
-            case -1 => false
-            case _ => true
+      decode[WinNotice](content) match {
+        case Right(notice) =>
+          println(notice)
+          sendResponse(socket.getOutputStream, "{ \"result\": \"ok\" }")
+        case Left(error) =>
+          decode[DSPRequest](content) match {
+            case Right(request) => {
+              response = DSPResponse(request.request_id, "http://localhost/hoge.jpg", 12.345).asJson
+              running = request.app_id match {
+                case -1 => false
+                case _ => true
+              }
+              sendResponse(socket.getOutputStream, response.toString)
+            }
+            case Left(error) => {
+              println(error)
+            }
           }
-          sendResponse(socket.getOutputStream, response.toString)
-        }
-        case Left(error) => {
-          println(error)
-        }
       }
-      println("dsp3")
     }
   }
 }

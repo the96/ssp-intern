@@ -19,11 +19,8 @@ abstract class Server(port: Int){
   def getRequest(input: InputStream): (ArrayList[String],String) = {
     val isr = new InputStreamReader(input)
     val br = new BufferedReader(isr)
-    println("gr1")
     val list = readRequestHead(br, new ArrayList[String])
-    println("gr2")
     val contentLength = getContentLength(list)
-    println("gr3")
     val content = contentLength match {
       case -1 => ""
       case _ => getContent(br,list,contentLength)
@@ -34,7 +31,6 @@ abstract class Server(port: Int){
   def readRequestHead(br: BufferedReader, req: ArrayList[String]): ArrayList[String] = {
     val line = br.readLine
     req.add(line)
-    println(line)
     line match {
       case "" => req
       case _ => readRequestHead(br, req)
